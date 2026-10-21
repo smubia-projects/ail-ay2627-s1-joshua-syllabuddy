@@ -6,6 +6,7 @@ import AdjustPanel from "@/components/AdjustPanel";
 import Intake from "@/components/Intake";
 import PlanView, { type PlanSettings } from "@/components/PlanView";
 import ReviewTable from "@/components/ReviewTable";
+import { ApiNotices } from "@/components/RateLimitCTA";
 import { courseColors } from "@/lib/colors";
 import { isValidISO, todayISO } from "@/lib/dates";
 import { generatePlan } from "@/lib/planner";
@@ -15,7 +16,7 @@ import { sampleItemsFrom } from "@/lib/sample";
 import { describeRead } from "@/lib/meta";
 import type { CourseItem, ReadMeta } from "@/lib/types";
 
-const STORE_KEY = "semester-planner:v1";
+const STORE_KEY = "ail-ay2627-s1-joshua-syllabuddy:plan:v1";
 const DEFAULT_SETTINGS: PlanSettings = {
   startDate: "",
   weekdayHours: 3,
@@ -217,6 +218,7 @@ export default function Home() {
           Erase everything saved in this browser
         </button>
       </p>
+      <ApiNotices />
     </main>
   );
 }

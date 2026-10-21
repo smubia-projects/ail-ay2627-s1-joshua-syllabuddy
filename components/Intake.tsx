@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { apiJson, isHandledApiError } from "@/lib/api";
 import { todayISO } from "@/lib/dates";
 import { SAMPLE_INJECTION_TEXT, SAMPLE_SYLLABUS_TEXT } from "@/lib/sample";
 import type { CourseItem, ExtractResponse, ReadMeta } from "@/lib/types";
@@ -10,6 +11,8 @@ interface Props {
   onLoadSample: () => void;
   hasItems: boolean;
 }
+
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
 export default function Intake({ onExtracted, onLoadSample, hasItems }: Props) {
   const [file, setFile] = useState<File | null>(null);
@@ -21,6 +24,10 @@ export default function Intake({ onExtracted, onLoadSample, hasItems }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   async function extract() {
+    if (file && file.size > MAX_FILE_BYTES) {
+      setError("File is larger than 10 MB. Paste the assessment section instead.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -28,9 +35,7 @@ export default function Intake({ onExtracted, onLoadSample, hasItems }: Props) {
       if (file) form.set("file", file);
       if (text.trim()) form.set("text", text);
       form.set("today", todayISO());
-      const res = await fetch("/api/extract", { method: "POST", body: form });
-      const data = (await res.json()) as ExtractResponse & { error?: string };
-      if (!res.ok) throw new Error(data.error || "Extraction failed.");
+      const data = await apiJson<ExtractResponse>("/api/extract", { method: "POST", body: form }, "Extraction failed.");
       if (data.items.length === 0) {
         // Nothing usable came back: say so, keep what the student already has, and keep their text.
         const extra = (data.warnings ?? []).filter((w) => !/no dated items/i.test(w));
@@ -43,6 +48,8 @@ export default function Intake({ onExtracted, onLoadSample, hasItems }: Props) {
       setFile(null);
       setText("");
     } catch (e) {
+      // 429 / 503 are already shown as a modal by lib/api.ts.
+      if (isHandledApiError(e)) return;
       setError(e instanceof Error ? e.message : "Extraction failed.");
     } finally {
       setBusy(false);
@@ -53,7 +60,10 @@ export default function Intake({ onExtracted, onLoadSample, hasItems }: Props) {
     <div className="card">
       <div className="intake">
         {!hasItems && (
-          <p className="firstrun">Drop a PDF, or paste the assessment section of your syllabus.</p>
+          <p className="firstrun">
+            Drop a PDF, or paste the assessment section of your syllabus. No syllabus handy? Try a sample
+            semester: it works without the AI.
+          </p>
         )}
         <div
           className={`drop${over ? " over" : ""}`}
