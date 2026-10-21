@@ -1,11 +1,10 @@
-import { NextResponse } from "next/server";
+import type { Request, Response } from "express";
 import { validateAdjustments, type RawAdjustments } from "@/lib/adjust";
 import { parseISO } from "@/lib/dates";
 import { generateJson, hasApiKey, NO_KEY_MESSAGE } from "@/lib/llm";
 import { detectInjection } from "@/lib/safety";
 
-export const runtime = "nodejs";
-export const maxDuration = 60;
+/** POST /api/adjust — JSON: { request, items, today }. Returns proposed, validated adjustments. */
 
 const MAX_REQUEST_CHARS = 500;
 const MAX_ITEMS = 150;
@@ -71,25 +70,19 @@ interface IncomingItem {
 const short = (v: unknown, n: number) =>
   typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f|]/g, " ").slice(0, n) : "";
 
-function fail(message: string, status = 400) {
-  return NextResponse.json({ error: message }, { status });
-}
+const fail = (res: Response, message: string, status = 400) => res.status(status).json({ error: message });
 
-export async function POST(req: Request) {
-  if (!hasApiKey()) return fail(NO_KEY_MESSAGE, 500);
+export async function adjustHandler(req: Request, res: Response) {
+  if (!hasApiKey()) return fail(res, NO_KEY_MESSAGE, 500);
 
-  let body: { request?: unknown; items?: unknown; today?: unknown };
-  try {
-    body = await req.json();
-  } catch {
-    return fail("Expected JSON.");
-  }
+  const body = (req.body ?? {}) as { request?: unknown; items?: unknown; today?: unknown };
+  if (!req.is("application/json")) return fail(res, "Expected JSON.");
 
   const request = typeof body.request === "string" ? body.request.trim() : "";
-  if (!request) return fail("Describe what changed.");
-  if (request.length > MAX_REQUEST_CHARS) return fail(`Keep it under ${MAX_REQUEST_CHARS} characters.`);
-  if (!Array.isArray(body.items) || body.items.length === 0) return fail("There are no items to adjust.");
-  if (body.items.length > MAX_ITEMS) return fail("Too many items.");
+  if (!request) return fail(res, "Describe what changed.");
+  if (request.length > MAX_REQUEST_CHARS) return fail(res, `Keep it under ${MAX_REQUEST_CHARS} characters.`);
+  if (!Array.isArray(body.items) || body.items.length === 0) return fail(res, "There are no items to adjust.");
+  if (body.items.length > MAX_ITEMS) return fail(res, "Too many items.");
 
   const today =
     typeof body.today === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.today)
@@ -123,7 +116,7 @@ export async function POST(req: Request) {
     })) as RawAdjustments;
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";
-    return fail(`Couldn't read that update: ${msg}`, 502);
+    return fail(res, `Couldn't read that update: ${msg}`, 502);
   }
 
   const result = validateAdjustments(raw, items, today);
@@ -131,5 +124,5 @@ export async function POST(req: Request) {
   if (looksLikeAttack) {
     result.warnings.push("Your message contains text that looks like instructions to an AI. Check each change before applying it.");
   }
-  return NextResponse.json(result);
+  return res.json(result);
 }
