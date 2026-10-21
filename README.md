@@ -4,7 +4,7 @@ Upload your syllabi. Syllabuddy finds every deadline, you check them, and you ge
 
 Built for the AI Lodge hackathon, track: **Productivity and workflows**.
 
-**Live demo:** https://syllabuddy-snowy.vercel.app (the sample semester works without the AI; reading a syllabus uses a free-tier Gemini key, so speed and availability can vary).
+**Live demo:** hosted by SMU BIA AI Lodge (Next.js frontend on Vercel, API on Cloud Run). The **sample semester works without the AI**; reading a syllabus and "Something changed?" call the AI and are rate limited per visitor.
 
 ## 1. Problem Statement
 
@@ -44,8 +44,8 @@ The AI is used in two places. Both go through one module, `lib/llm.ts`.
 
 | Where | What the AI does | What code does |
 | --- | --- | --- |
-| **Syllabus extraction** (`app/api/extract/route.ts`, `lib/extraction.ts`) | Reads a PDF, image or pasted text and returns a fixed JSON structure: course, items, dates, grade weights, and the exact line each item came from | Verifies each quote against the text, checks dates against the quote, flags doubtful items, drops items that look like commands, and sets `done` to false itself. The AI's output is never trusted as-is |
-| **Plan changes** (`app/api/adjust/route.ts`, `lib/adjust.ts`) | Turns a plain-English message into proposed changes, using only four allowed kinds | Validates every field, drops unknown items and bad dates, writes the plain-English description itself, and applies nothing until the student clicks Apply |
+| **Syllabus extraction** (`server/routes/extract.ts`, `lib/extraction.ts`) | Reads a PDF, image or pasted text and returns a fixed JSON structure: course, items, dates, grade weights, and the exact line each item came from | Verifies each quote against the text, checks dates against the quote, flags doubtful items, drops items that look like commands, and sets `done` to false itself. The AI's output is never trusted as-is |
+| **Plan changes** (`server/routes/adjust.ts`, `lib/adjust.ts`) | Turns a plain-English message into proposed changes, using only four allowed kinds | Validates every field, drops unknown items and bad dates, writes the plain-English description itself, and applies nothing until the student clicks Apply |
 
 The AI **does not** build the plan. `lib/planner.ts` is deterministic code, so the same inputs always give the same plan and the student can predict what will happen.
 
@@ -60,12 +60,12 @@ The AI **does not** build the plan. `lib/planner.ts` is deterministic code, so t
 ## 5. External Tools & Datasets
 
 **AI models**
-- **Google Gemini** through its REST API (`generateContent`, JSON output). The default model is `gemini-3.8-flash` (the evaluation below ran on `gemini-3.6-flash`), and the app falls back to other Flash models if it is unavailable. Used by default.
-- **Anthropic API** (optional). If a valid `ANTHROPIC_API_KEY` is set, the app uses it first with a forced tool call for structured output. If it is missing or fails, the app falls back to Gemini.
+- **OpenRouter** chat completions API with structured JSON output (`json_schema`, falling back to `json_object`). Images are sent as `image_url` data URIs and scanned PDFs as OpenRouter `file` parts. The default model is `google/gemini-2.5-flash` (`OPENROUTER_MODEL`), with `google/gemini-2.5-flash-lite` as the backup (`OPENROUTER_FALLBACK_MODEL`). The evaluation below ran on Gemini `gemini-3.6-flash` through Google's own API, before the move to OpenRouter.
 
 **Libraries**
-- Next.js 15 (App Router), React 19 and TypeScript
-- `@anthropic-ai/sdk` for the optional Anthropic provider
+- Next.js 15 (App Router), React 19 and TypeScript for the frontend
+- Express 5, `multer` and `cors` for the API, bundled with `esbuild`
+- `@upstash/redis` for the shared AI Lodge rate limiter
 - `unpdf` to read the text layer of PDFs on the server
 - `tsx` for the tests and evaluation scripts
 - Google Fonts: Bricolage Grotesque and Hanken Grotesk
@@ -74,33 +74,39 @@ The AI **does not** build the plan. `lib/planner.ts` is deterministic code, so t
 
 ## 6. Installation & Setup
 
-**You need:** Node.js 20 or newer, and an AI key. A free Gemini key from [Google AI Studio](https://aistudio.google.com/apikey) is enough.
+**You need:** Node.js 22 or newer and an [OpenRouter](https://openrouter.ai/keys) API key.
+
+The app has two parts: a Next.js frontend (`app/`, `components/`) and a small Express API (`server/`) that makes the AI calls. Both reuse the code in `lib/`.
 
 ```bash
-# 1. Get the code
-git clone https://github.com/jaypee044/Syllabuddy.git
-cd Syllabuddy
-
-# 2. Install dependencies
+# 1. Get the code and install
+git clone https://github.com/smubia-projects/ail-ay2627-s1-joshua-syllabuddy.git
+cd ail-ay2627-s1-joshua-syllabuddy
 npm install
 
-# 3. Add your key (create a file called .env.local in the project folder)
-#    The file needs one line:
-#    GEMINI_API_KEY=your-key-here
+# 2. Configure the API: copy .env.example to .env and set OPENROUTER_API_KEY
+cp .env.example .env
 
-# 4. Start the app
+# 3. Start the API (http://localhost:8080) and, in a second terminal, the frontend
+npm run dev:server
 npm run dev
 # open http://localhost:3000
 ```
 
-**Optional settings** in `.env.local`:
+The frontend calls `NEXT_PUBLIC_API_BASE` (default `http://localhost:8080`; see `.env.local.example`).
+
+**API settings** (`.env`, see `.env.example`):
 
 | Variable | Purpose |
 | --- | --- |
-| `GEMINI_API_KEY` | Free Gemini key. Used when no Anthropic key is set |
-| `ANTHROPIC_API_KEY` | Use Anthropic instead. Needs a paid key |
-| `GEMINI_MODEL` | Override the default Gemini model |
-| `ANTHROPIC_MODEL` | Override the default Anthropic model |
+| `OPENROUTER_API_KEY` | OpenRouter key (required for the AI features) |
+| `OPENROUTER_MODEL` | Main model, default `google/gemini-2.5-flash` |
+| `OPENROUTER_FALLBACK_MODEL` | Backup model, default `google/gemini-2.5-flash-lite` |
+| `CORS_ORIGINS` | Comma-separated frontend origins allowed to call the API |
+| `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | Shared rate-limit store. Unset means no limiting |
+| `RATE_LIMIT_EXTRACT_MAX`, `RATE_LIMIT_ADJUST_MAX`, `RATE_LIMIT_WINDOW_SECONDS` | Fallback limits per IP (default 5 per 5 days) |
+
+**Deployment.** The API is built from the root `Dockerfile` (esbuild bundles `server/` and `lib/` into `server/dist/server.js`) and deployed to Cloud Run by `.github/workflows/deploy.yml`, with its env vars from the `DOTENV` repo secret. The frontend is a Vercel project on the repo root (`vercel.json`, Next.js preset) with `NEXT_PUBLIC_API_BASE` set to the Cloud Run URL. `GET /api/health` returns `{"status":"ok"}`.
 
 **No key?** Click **Try a sample semester**. The planner, dashboard and calendar export work without the AI. Reading syllabi and "Something changed?" need a key.
 
@@ -120,8 +126,9 @@ npm run eval -- --runs=3  # three runs, to check the results are consistent
 ```
 
 **Troubleshooting**
-- *"The AI service is busy"*: the free tier is sometimes overloaded. The app retries and falls back to another model automatically. Wait a moment and try again.
-- *`.env.local` changes not picked up*: restart `npm run dev`.
+- *"The AI service is busy"*: the model is sometimes overloaded. The app retries and falls back to the backup model automatically. Wait a moment and try again.
+- *"Couldn't reach the Syllabuddy server"*: the API isn't running, or `NEXT_PUBLIC_API_BASE` / `CORS_ORIGINS` don't match.
+- *`.env` changes not picked up*: restart `npm run dev:server`. `NEXT_PUBLIC_API_BASE` is read at build time, so restart `npm run dev` (or rebuild) after changing it.
 - *Project inside OneDrive and `npm run dev` fails with `EINVAL readlink`*: delete the `.next` folder, or move the project out of OneDrive.
 
 ## 7. AI Safety & Limitations
@@ -165,13 +172,14 @@ The full report is in [`eval/results.md`](./eval/results.md).
 - **The injection scan is pattern-based.** It catches common attacks and not every phrasing. It is one layer, alongside the fixed output structure and the human review step.
 - **Wrong-date flagging is not exercised by the real-model run.** The model made no wrong dates in the evaluation, so that path is covered by unit tests with simulated bad output.
 - **Study-hour estimates are rough.** They are a starting point, and every item's hours can be changed.
-- **No sign-in or rate limiting.** A public deployment would need both.
+- **No sign-in.** The public demo is limited per visitor IP instead (a few AI requests per window, set centrally).
 - **Data terms.** The syllabus is sent to the AI provider. Check the provider's terms before using real student material, because free tiers can differ from paid ones.
 
 ## Project structure
 
 ```
-app/            Next.js pages and API routes (/api/extract, /api/adjust)
+app/            Next.js page (frontend only, deployed to Vercel)
+server/         Express API for Cloud Run (/api/health, /api/extract, /api/adjust) and the rate limiter
 components/     Intake, Dashboard, ReviewTable, AdjustPanel, PlanView
 lib/            planner, safety checks, AI client, extraction prompt, calendar export
 eval/           test syllabi, scoring, and the latest results
