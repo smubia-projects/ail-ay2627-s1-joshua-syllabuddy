@@ -1,6 +1,7 @@
 import cors from "cors";
 import express, { type ErrorRequestHandler } from "express";
 import multer from "multer";
+import { limitAdjust, limitExtract } from "./rateLimit";
 import { adjustHandler } from "./routes/adjust";
 import { extractHandler, MAX_FILE_BYTES } from "./routes/extract";
 
@@ -9,8 +10,8 @@ import { extractHandler, MAX_FILE_BYTES } from "./routes/extract";
  * separately on Vercel and calls these routes via NEXT_PUBLIC_API_BASE.
  *
  *   GET  /api/health   -> {"status":"ok"}
- *   POST /api/extract  -> read a syllabus (multipart: file and/or text)
- *   POST /api/adjust   -> turn a plain-English change into plan changes
+ *   POST /api/extract  -> read a syllabus (multipart: file and/or text)   [rate limited: extract]
+ *   POST /api/adjust   -> turn a plain-English change into plan changes   [rate limited: adjust]
  */
 
 const app = express();
@@ -40,8 +41,8 @@ app.get("/api/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
-app.post("/api/extract", upload.single("file"), extractHandler);
-app.post("/api/adjust", json, adjustHandler);
+app.post("/api/extract", upload.single("file"), limitExtract, extractHandler);
+app.post("/api/adjust", json, limitAdjust, adjustHandler);
 
 app.use((_req, res) => {
   res.status(404).json({ error: "Not found. This is the Syllabuddy API; the app itself is on the frontend." });
