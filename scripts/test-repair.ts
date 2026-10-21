@@ -33,7 +33,7 @@ const firstRaw = (): RawResult => ({
 const stub = (fixes: unknown[]) =>
   (async () => ({
     data: { fixes } as Record<string, unknown>,
-    meta: { provider: "gemini" as const, model: "x", calls: 1, ms: 1, fellBack: false },
+    meta: { provider: "openrouter" as const, model: "x", calls: 1, ms: 1, fellBack: false },
   }));
 
 const run = (raw: RawResult, generate: Parameters<typeof repairExtraction>[0]["generate"]) => {

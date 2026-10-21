@@ -1,48 +1,47 @@
-import Anthropic from "@anthropic-ai/sdk";
-
 /**
  * One place that talks to the AI provider.
  *
- * - Claude is used when ANTHROPIC_API_KEY is set, otherwise Gemini (free tier).
+ * - Every call goes through OpenRouter's chat completions API
+ *   (OPENROUTER_API_KEY), using OPENROUTER_MODEL with OPENROUTER_FALLBACK_MODEL
+ *   as the backup when the main model is busy, retired or slow.
  * - Output is always forced into a fixed JSON structure.
  * - Each call has a timeout, and transient failures (rate limits, server
- *   errors, network drops, malformed JSON) are retried once.
+ *   errors, network drops, malformed JSON) are retried with backoff.
  */
 
-const CLAUDE_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5";
-// Google retires Gemini models over time. If you see a 404 "model is no longer
-// available", set GEMINI_MODEL in .env.local to the model name the error suggests.
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
-// Short enough that a model that has stopped answering is skipped for a backup model.
+const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+// Read at call time so tests and scripts can change them after import.
+const mainModel = () => process.env.OPENROUTER_MODEL?.trim() || "google/gemini-2.5-flash";
+const fallbackModel = () => process.env.OPENROUTER_FALLBACK_MODEL?.trim() || "google/gemini-2.5-flash-lite";
+// Short enough that a model that has stopped answering is skipped for the backup model.
 const TIMEOUT_MS = 22_000;
 const MAX_ATTEMPTS = 3;
 // Stop retrying once this much time has passed, so a request never outlives the route's time limit.
 const RETRY_BUDGET_MS = 40_000;
 
 export const NO_KEY_MESSAGE =
-  "No API key is set. Add GEMINI_API_KEY (free) or ANTHROPIC_API_KEY to .env.local and restart the dev server.";
+  "No API key is set. Add OPENROUTER_API_KEY to the server's environment and restart it.";
 
 /** Ignore empty values and copied placeholders like "your-key-here". */
 const looksReal = (k?: string) => !!k && k.trim().length >= 20 && !/^your[-_ ]/i.test(k.trim());
 
-function keys() {
-  const a = process.env.ANTHROPIC_API_KEY?.trim();
-  const g = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)?.trim();
-  return { anthropic: looksReal(a) ? a : undefined, gemini: looksReal(g) ? g : undefined };
+function apiKey(): string | undefined {
+  const k = process.env.OPENROUTER_API_KEY?.trim();
+  return looksReal(k) ? k : undefined;
 }
 
 /** Which model will be tried first, for labelling evaluation results. */
 export function describeProvider(): string {
-  const k = keys();
-  if (k.anthropic) return `Claude (${CLAUDE_MODEL})`;
-  if (k.gemini) return `Gemini (${GEMINI_MODEL}, with fallback to other Flash models if busy)`;
-  return "no provider configured";
+  if (!apiKey()) return "no provider configured";
+  return `OpenRouter (${mainModel()}, with fallback to ${fallbackModel()} if busy)`;
 }
 
 export function hasApiKey(): boolean {
-  const k = keys();
-  return !!(k.anthropic || k.gemini);
+  return !!apiKey();
 }
+
+/** A plain JSON Schema object, as sent in OpenRouter's response_format. */
+export type JsonSchema = Record<string, unknown>;
 
 export interface GenerateOptions {
   instructions: string;
@@ -50,19 +49,18 @@ export interface GenerateOptions {
   textParts?: string[];
   /** A PDF or image, base64 encoded. */
   file?: { mime: string; data: string } | null;
+  /** Short identifier for the structured output, e.g. "record_syllabus_items". */
   toolName: string;
   toolDescription: string;
-  schema: Anthropic.Messages.Tool["input_schema"];
+  schema: JsonSchema;
   /** If the model answers with a bare list, wrap it under this key (e.g. "items"). */
   arrayKey?: string;
-  /** Plain-text description of the JSON shape, used by the Gemini path. */
+  /** Plain-text description of the JSON shape, added to the prompt for every model. */
   shapeHint: string;
 }
 
-type ImageType = "image/png" | "image/jpeg" | "image/webp" | "image/gif";
-
 export interface CallMeta {
-  provider: "gemini" | "claude";
+  provider: "openrouter";
   model: string;
   calls: number;
   ms: number;
@@ -71,14 +69,13 @@ export interface CallMeta {
 
 /** Filled in as a request moves through retries and fallbacks. */
 interface Trace {
-  provider: "gemini" | "claude";
   model: string;
   calls: number;
   /** When the whole request must be finished, so it never outlives the route's time limit. */
   deadline?: number;
 }
 
-/** Time allowed for one AI request in total, retries and backup models included. */
+/** Time allowed for one AI request in total, retries and the backup model included. */
 const TOTAL_BUDGET_MS = 45_000;
 
 /** How long one call may take: the usual limit, or whatever is left of the total budget. */
@@ -91,137 +88,111 @@ function callTimeout(t?: Trace): number {
   return Math.min(TIMEOUT_MS, left);
 }
 
-async function viaClaude(o: GenerateOptions, apiKey: string, t?: Trace): Promise<unknown> {
-  const content: Anthropic.Messages.ContentBlockParam[] = [];
+const versionOf = (name: string) => Number(/gemini-(\d+(?:\.\d+)?)/.exec(name)?.[1] ?? 0);
+
+function userContent(o: GenerateOptions): Array<Record<string, unknown>> {
+  const content: Array<Record<string, unknown>> = [];
   if (o.file) {
+    const dataUrl = `data:${o.file.mime};base64,${o.file.data}`;
     content.push(
       o.file.mime === "application/pdf"
-        ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: o.file.data } }
-        : { type: "image", source: { type: "base64", media_type: o.file.mime as ImageType, data: o.file.data } },
+        ? { type: "file", file: { filename: "syllabus.pdf", file_data: dataUrl } }
+        : { type: "image_url", image_url: { url: dataUrl } },
     );
   }
   for (const t of o.textParts ?? []) content.push({ type: "text", text: t });
-  content.push({ type: "text", text: `${o.instructions}\n\nCall ${o.toolName} exactly once.` });
-
-  const message = await new Anthropic({ apiKey }).messages.create(
-    {
-      model: CLAUDE_MODEL,
-      max_tokens: 4096,
-      tools: [{ name: o.toolName, description: o.toolDescription, input_schema: o.schema }],
-      tool_choice: { type: "tool", name: o.toolName },
-      messages: [{ role: "user", content }],
-    },
-    { timeout: callTimeout(t) },
-  );
-
-  const toolUse = message.content.find(
-    (b): b is Anthropic.Messages.ToolUseBlock => b.type === "tool_use",
-  );
-  if (!toolUse) throw new Error("The AI did not return structured data.");
-  if (t) Object.assign(t, { provider: "claude", model: CLAUDE_MODEL });
-  return toolUse.input;
+  content.push({ type: "text", text: `${o.instructions}\n\nReply with JSON only, in exactly this shape:\n${o.shapeHint}` });
+  return content;
 }
 
-async function viaGemini(o: GenerateOptions, apiKey: string, model: string, t?: Trace): Promise<unknown> {
-  const parts: Array<Record<string, unknown>> = [];
-  if (o.file) parts.push({ inline_data: { mime_type: o.file.mime, data: o.file.data } });
-  for (const t of o.textParts ?? []) parts.push({ text: t });
-  parts.push({ text: `${o.instructions}\n\nReply with JSON only, in exactly this shape:\n${o.shapeHint}` });
+class HttpError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+  ) {
+    super(message);
+  }
+}
 
+function errorFor(status: number, detail: string): HttpError {
+  const message =
+    status === 429 || status === 502 || status === 503
+      ? "The AI service is busy right now. Wait a few seconds and try again."
+      : status === 404 || (status === 400 && /not a valid model|model.*not found|no endpoints/i.test(detail))
+        ? "That AI model is no longer available. Set OPENROUTER_MODEL to a current model."
+        : status === 401 || status === 403
+          ? "The AI key was rejected. Check OPENROUTER_API_KEY and restart the server."
+          : status === 402
+            ? "The AI account is out of credits. Try again later."
+            : `OpenRouter returned ${status}: ${detail}`;
+  // A retired or unknown model is reported as 404 so the fallback logic treats it as "gone".
+  const code = status === 400 && /not a valid model|model.*not found|no endpoints/i.test(detail) ? 404 : status;
+  return new HttpError(message, code);
+}
+
+async function viaOpenRouter(o: GenerateOptions, key: string, model: string, t?: Trace): Promise<unknown> {
+  const messages = [{ role: "user", content: userContent(o) }];
   // Reading a syllabus doesn't need long "thinking", which is most of the wait on newer Flash models.
-  // Older models don't know the setting, so a 400 about it is retried once without it.
-  const call = (thinking: boolean) =>
-    fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+  // Some models reject a reasoning or json_schema setting; a 400 about either is retried once
+  // with the plainer request (no reasoning setting, json_object output).
+  const call = (plain: boolean) =>
+    fetch(OPENROUTER_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+        "X-Title": "Syllabuddy",
+      },
       body: JSON.stringify({
-        contents: [{ role: "user", parts }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0,
-          ...(thinking
-            ? { thinkingConfig: versionOf(model) >= 3 ? { thinkingLevel: "low" } : { thinkingBudget: 0 } }
-            : {}),
-        },
+        model,
+        messages,
+        temperature: 0,
+        max_tokens: 8192,
+        response_format: plain
+          ? { type: "json_object" }
+          : {
+              type: "json_schema",
+              json_schema: { name: o.toolName, description: o.toolDescription, strict: false, schema: o.schema },
+            },
+        ...(plain ? {} : { reasoning: { effort: versionOf(model) >= 3 ? "low" : "none", exclude: true } }),
       }),
       signal: AbortSignal.timeout(callTimeout(t)),
     });
-  let res = await call(true);
+  let res = await call(false);
   if (res.status === 400) {
     const body = await res.clone().text();
-    if (/think/i.test(body)) res = await call(false);
+    if (/reason|think|effort|schema|response_format|json/i.test(body)) res = await call(true);
   }
   if (!res.ok) {
     const detail = (await res.text()).slice(0, 300);
-    const message =
-      res.status === 429 || res.status === 503
-        ? "The AI service is busy right now. Wait a few seconds and try again."
-        : res.status === 404
-          ? "That AI model is no longer available. Set GEMINI_MODEL to a current Flash model."
-          : res.status === 401 || res.status === 403
-          ? "The AI key was rejected. Check GEMINI_API_KEY in .env.local and restart the server."
-          : `Gemini returned ${res.status}: ${detail}`;
-    const err = new Error(message);
-    (err as Error & { status?: number }).status = res.status;
-    throw err;
+    throw errorFor(res.status, detail);
   }
 
   const json = (await res.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    error?: { code?: number; message?: string };
+    choices?: Array<{ message?: { content?: string | Array<{ text?: string }> | null }; error?: { code?: number; message?: string } }>;
   };
-  const out = (json.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("");
-  if (!out) throw new Error("Gemini returned no content.");
+  const failure = json.error ?? json.choices?.[0]?.error;
+  if (failure) throw errorFor(Number(failure.code) || 502, String(failure.message ?? "").slice(0, 300));
+  const raw = json.choices?.[0]?.message?.content;
+  const out = Array.isArray(raw) ? raw.map((p) => p.text ?? "").join("") : (raw ?? "");
+  if (!out) throw new Error("The AI returned no content.");
   let parsed: unknown;
   try {
-    parsed = JSON.parse(out.replace(/^```(?:json)?\s*|\s*```$/g, ""));
+    parsed = JSON.parse(out.trim().replace(/^```(?:json)?\s*|\s*```$/g, ""));
   } catch {
-    throw new Error("Gemini returned something that wasn't valid JSON.");
+    throw new Error("The AI returned something that wasn't valid JSON.");
   }
-  if (t) Object.assign(t, { provider: "gemini", model });
+  if (t) t.model = model;
   return parsed;
 }
 
-// ---- Gemini model fallback -------------------------------------------------
-// Free-tier models get overloaded or retired. When the main model is busy or
-// gone, ask Google which other Flash models this key can use and try those.
-
-let modelCache: string[] | null = null;
-
-/** For tests: forget the cached model list. */
-export function resetModelCache() {
-  modelCache = null;
-  cooldown.clear();
-}
-
-const versionOf = (name: string) => Number(/gemini-(\d+(?:\.\d+)?)/.exec(name)?.[1] ?? 0);
-
-async function listGeminiModels(apiKey: string): Promise<string[]> {
-  if (modelCache) return modelCache;
-  try {
-    const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=100", {
-      headers: { "x-goog-api-key": apiKey },
-      signal: AbortSignal.timeout(8_000),
-    });
-    if (!res.ok) return [];
-    const json = (await res.json()) as {
-      models?: Array<{ name?: string; supportedGenerationMethods?: string[] }>;
-    };
-    modelCache = (json.models ?? [])
-      .filter((m) => m.name && m.supportedGenerationMethods?.includes("generateContent"))
-      .map((m) => m.name!.replace(/^models\//, ""))
-      .filter((n) => /flash/i.test(n) && !/(image|tts|live|audio|embedding|robotics|computer|exp|-\d{3,}$)/i.test(n))
-      .sort(
-        (a, b) =>
-          versionOf(b) - versionOf(a) || Number(/lite/i.test(a)) - Number(/lite/i.test(b)),
-      );
-    return modelCache;
-  } catch {
-    return [];
-  }
-}
+// ---- Model fallback ---------------------------------------------------------
+// Models get overloaded or retired. When the main model is busy or gone, the
+// backup model from OPENROUTER_FALLBACK_MODEL is tried.
 
 const statusOf = (err: unknown) => (err as { status?: number }).status;
-const isCapacityError = (err: unknown) => [404, 429, 503].includes(statusOf(err) ?? 0) || isTimeout(err);
+const isCapacityError = (err: unknown) => [404, 408, 429, 502, 503].includes(statusOf(err) ?? 0) || isTimeout(err);
 
 // A model that just ran out of quota or was overloaded is skipped for a few minutes,
 // so the next request doesn't spend its time budget asking it again.
@@ -232,23 +203,30 @@ function cool(model: string, err: unknown) {
   cooldown.set(model, Date.now() + minutes * 60_000);
 }
 
-async function viaGeminiWithFallback(o: GenerateOptions, apiKey: string, t?: Trace): Promise<unknown> {
+/** For tests: forget which models are resting. */
+export function resetModelCache() {
+  cooldown.clear();
+}
+
+async function viaOpenRouterWithFallback(o: GenerateOptions, key: string, t?: Trace): Promise<unknown> {
   const attempt = async (model: string) => {
     try {
-      return await viaGemini(o, apiKey, model, t);
+      return await viaOpenRouter(o, key, model, t);
     } catch (err) {
       if (isCapacityError(err)) cool(model, err);
       throw err;
     }
   };
 
+  const main = mainModel();
+  const backup = fallbackModel();
   let last: unknown;
   const failures: unknown[] = [];
   let triedMain = false;
-  if (!isCooling(GEMINI_MODEL)) {
+  if (!isCooling(main)) {
     triedMain = true;
     try {
-      return await attempt(GEMINI_MODEL);
+      return await attempt(main);
     } catch (first) {
       if (!isCapacityError(first)) throw first;
       last = first;
@@ -256,12 +234,8 @@ async function viaGeminiWithFallback(o: GenerateOptions, apiKey: string, t?: Tra
     }
   }
 
-  const began = Date.now();
-  const alternatives = (await listGeminiModels(apiKey))
-    .filter((m) => m !== GEMINI_MODEL && !isCooling(m))
-    .slice(0, 3);
+  const alternatives = backup && backup !== main && !isCooling(backup) ? [backup] : [];
   for (const model of alternatives) {
-    if (Date.now() - began > 25_000) break; // don't outlive the route's time limit
     try {
       return await attempt(model);
     } catch (err) {
@@ -272,7 +246,7 @@ async function viaGeminiWithFallback(o: GenerateOptions, apiKey: string, t?: Tra
   }
 
   // Everything is resting: ask the main model anyway rather than fail without trying.
-  if (!triedMain && alternatives.length === 0) return attempt(GEMINI_MODEL);
+  if (!triedMain && alternatives.length === 0) return attempt(main);
   // A retired model (404) says nothing about whether the service is busy. If anything else
   // failed too (quota, overload, timeout), report that one instead of the 404.
   const informative = failures.find((e) => statusOf(e) !== 404);
@@ -281,16 +255,12 @@ async function viaGeminiWithFallback(o: GenerateOptions, apiKey: string, t?: Tra
 
 /** Auth and bad-request errors won't fix themselves; everything else might. */
 function isRetryable(err: unknown): boolean {
-  const status = (err as { status?: number }).status;
+  const status = statusOf(err);
   if (typeof status === "number") return status === 408 || status === 409 || status === 429 || status >= 500;
   return true; // network error, timeout, malformed output
 }
 
-/**
- * Tries Claude first when a real Anthropic key is set, then Gemini. If the
- * first provider fails for good (bad key, outage), the next one is tried, so a
- * single misconfigured key doesn't take the whole app down.
- */
+/** Asks the model for JSON in the given shape. */
 export async function generateJson(o: GenerateOptions): Promise<Record<string, unknown>> {
   return (await generateJsonWithMeta(o)).data;
 }
@@ -302,54 +272,41 @@ const backoffMs = () => Number(process.env.LLM_BACKOFF_MS ?? 1000);
 export async function generateJsonWithMeta(
   o: GenerateOptions,
 ): Promise<{ data: Record<string, unknown>; meta: CallMeta }> {
-  const k = keys();
-  const providers: Array<(t: Trace) => Promise<unknown>> = [];
-  if (k.anthropic) providers.push((t) => viaClaude(o, k.anthropic!, t));
-  if (k.gemini) providers.push((t) => viaGeminiWithFallback(o, k.gemini!, t));
-  if (providers.length === 0) throw new Error(NO_KEY_MESSAGE);
+  const key = apiKey();
+  if (!key) throw new Error(NO_KEY_MESSAGE);
 
   let last: unknown;
   const startedAt = Date.now();
-  const trace: Trace = {
-    provider: k.anthropic ? "claude" : "gemini",
-    model: "",
-    calls: 0,
-    deadline: startedAt + TOTAL_BUDGET_MS,
-  };
-  for (let p = 0; p < providers.length; p++) {
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      try {
-        trace.calls++;
-        let out = await providers[p](trace);
-        // Some models answer with the bare list of items instead of {"items": [...]}.
-        // The list is wrapped here; every item still goes through the normal safety checks.
-        if (Array.isArray(out) && o.arrayKey) out = { [o.arrayKey]: out };
-        if (!out || typeof out !== "object" || Array.isArray(out)) {
-          throw new Error("The AI returned data in the wrong shape.");
-        }
-        const first = trace.provider === "gemini" ? GEMINI_MODEL : CLAUDE_MODEL;
-        return {
-          data: out as Record<string, unknown>,
-          meta: {
-            provider: trace.provider,
-            model: trace.model,
-            calls: trace.calls,
-            ms: Date.now() - startedAt,
-            fellBack: p > 0 || trace.model !== first,
-          },
-        };
-      } catch (err) {
-        last = err;
-        if (attempt === MAX_ATTEMPTS || !isRetryable(err)) break;
-        if (Date.now() - startedAt > RETRY_BUDGET_MS) break;
-        await new Promise((r) => setTimeout(r, backoffMs() * attempt));
+  const trace: Trace = { model: "", calls: 0, deadline: startedAt + TOTAL_BUDGET_MS };
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      trace.calls++;
+      let out = await viaOpenRouterWithFallback(o, key, trace);
+      // Some models answer with the bare list of items instead of {"items": [...]}.
+      // The list is wrapped here; every item still goes through the normal safety checks.
+      if (Array.isArray(out) && o.arrayKey) out = { [o.arrayKey]: out };
+      if (!out || typeof out !== "object" || Array.isArray(out)) {
+        throw new Error("The AI returned data in the wrong shape.");
       }
+      return {
+        data: out as Record<string, unknown>,
+        meta: {
+          provider: "openrouter",
+          model: trace.model,
+          calls: trace.calls,
+          ms: Date.now() - startedAt,
+          fellBack: trace.model !== mainModel(),
+        },
+      };
+    } catch (err) {
+      last = err;
+      if (attempt === MAX_ATTEMPTS || !isRetryable(err)) break;
+      if (Date.now() - startedAt > RETRY_BUDGET_MS) break;
+      await new Promise((r) => setTimeout(r, backoffMs() * attempt));
     }
   }
   if (isTimeout(last)) {
-    throw new Error(
-      "The AI took too long to answer. Try again in a moment.",
-    );
+    throw new Error("The AI took too long to answer. Try again in a moment.");
   }
   throw last instanceof Error ? last : new Error("The AI request failed.");
 }

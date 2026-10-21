@@ -102,7 +102,7 @@ export interface Plan {
 
 /** What happened when the AI was called, shown to the student under the table. */
 export interface ReadMeta {
-  provider: "gemini" | "claude";
+  provider: "openrouter";
   model: string;
   /** Total AI calls made, counting retries and the repair call. */
   calls: number;

@@ -1,18 +1,17 @@
-process.env.GEMINI_API_KEY = "test-key-test-key-test-key-1234";
-delete process.env.ANTHROPIC_API_KEY;
+process.env.OPENROUTER_API_KEY = "test-key-test-key-test-key-1234";
 process.env.LLM_BACKOFF_MS = "0";
 
 import assert from "node:assert/strict";
 import { CASES } from "../eval/cases";
 
 /**
- * The whole read -> check -> repair flow, against a pretend Gemini whose first
+ * The whole read -> check -> repair flow, against a pretend OpenRouter whose first
  * answer has a wrong date and an invented item, and whose second answer corrects them.
  */
 
 const c = CASES.find((x) => x.id === "list")!;
 const reply = (data: unknown) =>
-  new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(data) }] } }] }), { status: 200 });
+  new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: JSON.stringify(data) } }] }), { status: 200 });
 
 async function main() {
   const { runExtraction } = await import("../lib/pipeline");
@@ -61,7 +60,7 @@ async function main() {
   console.log("  ok  the result reports what happened");
 
   const line = describeRead(m);
-  assert.ok(line.includes("Gemini 3.8 Flash") && line.includes("1 fixed, 1 removed"));
+  assert.ok(line.includes("Gemini 2.5 Flash") && line.includes("1 fixed, 1 removed"));
   assert.ok(!line.includes("retr"), "a repair call is not counted as a retry");
   console.log("  ok  the 'how this was read' line is accurate");
 

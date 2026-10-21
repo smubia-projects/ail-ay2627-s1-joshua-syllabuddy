@@ -6,7 +6,7 @@ import { describeProvider, hasApiKey } from "../lib/llm";
 
 /**
  * Runs the real syllabus-reading step on test syllabi with known answers and
- * writes the scores to eval/results.md. Needs an API key in .env.local:
+ * writes the scores to eval/results.md. Needs OPENROUTER_API_KEY in .env:
  *
  *   npm run eval
  */
@@ -40,7 +40,7 @@ async function runOnce(label: string) {
 
 async function main() {
   if (!hasApiKey()) {
-    console.error("No API key found. Add GEMINI_API_KEY to .env.local, then run: npm run eval");
+    console.error("No API key found. Add OPENROUTER_API_KEY to .env, then run: npm run eval");
     process.exit(1);
   }
 
