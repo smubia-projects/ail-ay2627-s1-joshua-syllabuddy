@@ -60,7 +60,7 @@ The AI **does not** build the plan. `lib/planner.ts` is deterministic code, so t
 ## 5. External Tools & Datasets
 
 **AI models**
-- **OpenRouter** chat completions API with structured JSON output (`json_schema`, falling back to `json_object`). Images are sent as `image_url` data URIs and scanned PDFs as OpenRouter `file` parts. The default model is `google/gemini-2.5-flash` (`OPENROUTER_MODEL`), with `google/gemini-2.5-flash-lite` as the backup (`OPENROUTER_FALLBACK_MODEL`). The evaluation below ran on Gemini `gemini-3.6-flash` through Google's own API, before the move to OpenRouter.
+- **OpenRouter** chat completions API with structured JSON output (`json_schema`, falling back to `json_object`). Images are sent as `image_url` data URIs and scanned PDFs as OpenRouter `file` parts. The default model is `google/gemini-2.5-flash` (`MODEL_NAME`), with `google/gemini-2.5-flash-lite` as the backup (`FALLBACK_MODEL_NAME`). The evaluation below ran on Gemini `gemini-3.6-flash` through Google's own API, before the move to OpenRouter.
 
 **Libraries**
 - Next.js 15 (App Router), React 19 and TypeScript for the frontend
@@ -84,7 +84,7 @@ git clone https://github.com/smubia-projects/ail-ay2627-s1-joshua-syllabuddy.git
 cd ail-ay2627-s1-joshua-syllabuddy
 npm install
 
-# 2. Configure the API: copy .env.example to .env and set OPENROUTER_API_KEY
+# 2. Configure the API: copy .env.example to .env and set API_KEY
 cp .env.example .env
 
 # 3. Start the API (http://localhost:8080) and, in a second terminal, the frontend
@@ -99,9 +99,9 @@ The frontend calls `NEXT_PUBLIC_API_BASE` (default `http://localhost:8080`; see 
 
 | Variable | Purpose |
 | --- | --- |
-| `OPENROUTER_API_KEY` | OpenRouter key (required for the AI features) |
-| `OPENROUTER_MODEL` | Main model, default `google/gemini-2.5-flash` |
-| `OPENROUTER_FALLBACK_MODEL` | Backup model, default `google/gemini-2.5-flash-lite` |
+| `API_KEY` | OpenRouter key (required for the AI features) |
+| `MODEL_NAME` | Main model, default `google/gemini-2.5-flash` |
+| `FALLBACK_MODEL_NAME` | Backup model, default `google/gemini-2.5-flash-lite` |
 | `CORS_ORIGINS` | Comma-separated frontend origins allowed to call the API |
 | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | Shared rate-limit store. Unset means no limiting |
 | `RATE_LIMIT_EXTRACT_MAX`, `RATE_LIMIT_ADJUST_MAX`, `RATE_LIMIT_WINDOW_SECONDS` | Fallback limits per IP (default 5 per 5 days) |

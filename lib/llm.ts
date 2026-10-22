@@ -9,10 +9,10 @@
  *   errors, network drops, malformed JSON) are retried with backoff.
  */
 
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const openrouterUrl = () => `${((process.env.API_BASE_URL || process.env.OPENROUTER_BASE_URL)?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")}/chat/completions`;
 // Read at call time so tests and scripts can change them after import.
-const mainModel = () => process.env.OPENROUTER_MODEL?.trim() || "google/gemini-2.5-flash";
-const fallbackModel = () => process.env.OPENROUTER_FALLBACK_MODEL?.trim() || "google/gemini-2.5-flash-lite";
+const mainModel = () => (process.env.MODEL_NAME || process.env.OPENROUTER_MODEL)?.trim() || "google/gemini-2.5-flash";
+const fallbackModel = () => (process.env.FALLBACK_MODEL_NAME || process.env.OPENROUTER_FALLBACK_MODEL)?.trim() || "google/gemini-2.5-flash-lite";
 // Short enough that a model that has stopped answering is skipped for the backup model.
 const TIMEOUT_MS = 22_000;
 const MAX_ATTEMPTS = 3;
@@ -26,7 +26,7 @@ export const NO_KEY_MESSAGE =
 const looksReal = (k?: string) => !!k && k.trim().length >= 20 && !/^your[-_ ]/i.test(k.trim());
 
 function apiKey(): string | undefined {
-  const k = process.env.OPENROUTER_API_KEY?.trim();
+  const k = (process.env.API_KEY || process.env.OPENROUTER_API_KEY)?.trim();
   return looksReal(k) ? k : undefined;
 }
 
@@ -136,7 +136,7 @@ async function viaOpenRouter(o: GenerateOptions, key: string, model: string, t?:
   // Some models reject a reasoning or json_schema setting; a 400 about either is retried once
   // with the plainer request (no reasoning setting, json_object output).
   const call = (plain: boolean) =>
-    fetch(OPENROUTER_URL, {
+    fetch(openrouterUrl(), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
