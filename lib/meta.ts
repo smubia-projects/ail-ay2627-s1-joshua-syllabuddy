@@ -1,6 +1,6 @@
 import type { ReadMeta } from "./types";
 
-/** "google/gemini-2.5-flash" -> "Gemini 2.5 Flash" */
+/** "gemini-3.5-flash-lite" -> "Gemini 3.5 Flash Lite" */
 export function prettyModel(model: string): string {
   return model
     .replace(/^[^/]*\//, "")

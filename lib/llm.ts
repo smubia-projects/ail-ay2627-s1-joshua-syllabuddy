@@ -9,10 +9,10 @@
  *   errors, network drops, malformed JSON) are retried with backoff.
  */
 
-const openrouterUrl = () => `${((process.env.API_BASE_URL || process.env.OPENROUTER_BASE_URL)?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "")}/chat/completions`;
+const openrouterUrl = () => `${((process.env.API_BASE_URL || process.env.OPENROUTER_BASE_URL)?.trim() || "https://api.apiyi.com/v1").replace(/\/+$/, "")}/chat/completions`;
 // Read at call time so tests and scripts can change them after import.
-const mainModel = () => (process.env.MODEL_NAME || process.env.OPENROUTER_MODEL)?.trim() || "google/gemini-2.5-flash";
-const fallbackModel = () => (process.env.FALLBACK_MODEL_NAME || process.env.OPENROUTER_FALLBACK_MODEL)?.trim() || "google/gemini-2.5-flash-lite";
+const mainModel = () => (process.env.MODEL_NAME || process.env.OPENROUTER_MODEL)?.trim() || "gemini-3.5-flash-lite";
+const fallbackModel = () => (process.env.FALLBACK_MODEL_NAME || process.env.OPENROUTER_FALLBACK_MODEL)?.trim() || "gemini-3.1-flash-lite";
 // Short enough that a model that has stopped answering is skipped for the backup model.
 const TIMEOUT_MS = 22_000;
 const MAX_ATTEMPTS = 3;
@@ -93,12 +93,8 @@ const versionOf = (name: string) => Number(/gemini-(\d+(?:\.\d+)?)/.exec(name)?.
 function userContent(o: GenerateOptions): Array<Record<string, unknown>> {
   const content: Array<Record<string, unknown>> = [];
   if (o.file) {
-    const dataUrl = `data:${o.file.mime};base64,${o.file.data}`;
-    content.push(
-      o.file.mime === "application/pdf"
-        ? { type: "file", file: { filename: "syllabus.pdf", file_data: dataUrl } }
-        : { type: "image_url", image_url: { url: dataUrl } },
-    );
+    // Images and PDFs both go as data URLs: apiyi's Gemini models read a PDF this way and ignore `file` parts.
+    content.push({ type: "image_url", image_url: { url: `data:${o.file.mime};base64,${o.file.data}` } });
   }
   for (const t of o.textParts ?? []) content.push({ type: "text", text: t });
   content.push({ type: "text", text: `${o.instructions}\n\nReply with JSON only, in exactly this shape:\n${o.shapeHint}` });

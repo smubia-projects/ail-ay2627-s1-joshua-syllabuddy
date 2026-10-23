@@ -14,7 +14,7 @@ if (!key) {
   process.exit(1);
 }
 
-const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
+const ENDPOINT = "https://api.apiyi.com/v1/chat/completions";
 
 async function time(model: string, jsonSchema: boolean): Promise<string> {
   const started = Date.now();
@@ -52,8 +52,8 @@ async function time(model: string, jsonSchema: boolean): Promise<string> {
 
 (async () => {
   const models = [
-    process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash",
-    process.env.OPENROUTER_FALLBACK_MODEL || "google/gemini-2.5-flash-lite",
+    process.env.OPENROUTER_MODEL || "gemini-3.5-flash-lite",
+    process.env.OPENROUTER_FALLBACK_MODEL || "gemini-3.1-flash-lite",
     ...process.argv.slice(2),
   ].filter((m, i, all) => all.indexOf(m) === i);
   console.log(`Timing ${models.length} models with a tiny request (25s limit each)...\n`);

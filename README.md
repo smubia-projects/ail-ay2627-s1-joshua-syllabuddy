@@ -60,7 +60,7 @@ The AI **does not** build the plan. `lib/planner.ts` is deterministic code, so t
 ## 5. External Tools & Datasets
 
 **AI models**
-- **OpenRouter** chat completions API with structured JSON output (`json_schema`, falling back to `json_object`). Images are sent as `image_url` data URIs and scanned PDFs as OpenRouter `file` parts. The default model is `google/gemini-2.5-flash` (`MODEL_NAME`), with `google/gemini-2.5-flash-lite` as the backup (`FALLBACK_MODEL_NAME`). The evaluation below ran on Gemini `gemini-3.6-flash` through Google's own API, before the move to OpenRouter.
+- **apiyi** chat completions API with structured JSON output (`json_schema`, falling back to `json_object`). Images and scanned PDFs are both sent as `image_url` data URIs (apiyi's Gemini models ignore `file` parts). The default model is `gemini-3.5-flash-lite` (`MODEL_NAME`), with `gemini-3.1-flash-lite` as the backup (`FALLBACK_MODEL_NAME`). The evaluation below ran on Gemini `gemini-3.6-flash` through Google's own API, before the move to apiyi.
 
 **Libraries**
 - Next.js 15 (App Router), React 19 and TypeScript for the frontend
@@ -100,8 +100,8 @@ The frontend calls `NEXT_PUBLIC_API_BASE` (default `http://localhost:8080`; see 
 | Variable | Purpose |
 | --- | --- |
 | `API_KEY` | OpenRouter key (required for the AI features) |
-| `MODEL_NAME` | Main model, default `google/gemini-2.5-flash` |
-| `FALLBACK_MODEL_NAME` | Backup model, default `google/gemini-2.5-flash-lite` |
+| `MODEL_NAME` | Main model, default `gemini-3.5-flash-lite` |
+| `FALLBACK_MODEL_NAME` | Backup model, default `gemini-3.1-flash-lite` |
 | `CORS_ORIGINS` | Comma-separated frontend origins allowed to call the API |
 | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | Shared rate-limit store. Unset means no limiting |
 | `RATE_LIMIT_EXTRACT_MAX`, `RATE_LIMIT_ADJUST_MAX`, `RATE_LIMIT_WINDOW_SECONDS` | Fallback limits per IP (default 5 per 5 days) |

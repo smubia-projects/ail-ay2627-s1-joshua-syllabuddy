@@ -60,7 +60,7 @@ async function main() {
   console.log("  ok  the result reports what happened");
 
   const line = describeRead(m);
-  assert.ok(line.includes("Gemini 2.5 Flash") && line.includes("1 fixed, 1 removed"));
+  assert.ok(line.includes("Gemini 3.5 Flash Lite") && line.includes("1 fixed, 1 removed"));
   assert.ok(!line.includes("retr"), "a repair call is not counted as a retry");
   console.log("  ok  the 'how this was read' line is accurate");
 

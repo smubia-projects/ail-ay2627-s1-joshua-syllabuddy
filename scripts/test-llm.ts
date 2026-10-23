@@ -1,6 +1,6 @@
 process.env.OPENROUTER_API_KEY = "test-key-test-key-test-key-1234";
-process.env.OPENROUTER_MODEL = "google/gemini-2.5-flash";
-process.env.OPENROUTER_FALLBACK_MODEL = "google/gemini-2.5-flash-lite";
+process.env.OPENROUTER_MODEL = "gemini-3.5-flash-lite";
+process.env.OPENROUTER_FALLBACK_MODEL = "gemini-3.1-flash-lite";
 process.env.LLM_BACKOFF_MS = "0";
 
 import assert from "node:assert/strict";
@@ -11,8 +11,8 @@ import assert from "node:assert/strict";
  * student would get each time. No real AI calls are made.
  */
 
-const MAIN = "google/gemini-2.5-flash";
-const BACKUP = "google/gemini-2.5-flash-lite";
+const MAIN = "gemini-3.5-flash-lite";
+const BACKUP = "gemini-3.1-flash-lite";
 
 const OPTS = {
   instructions: "Extract.",
@@ -38,7 +38,7 @@ function pretend(handler: (model: string, n: number, body: Record<string, unknow
   sent = [];
   generateCalls = [];
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    assert.ok(String(input).startsWith("https://openrouter.ai/api/v1/chat/completions"));
+    assert.ok(String(input).startsWith("https://api.apiyi.com/v1/chat/completions"));
     const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
     const model = String(body.model);
     sent.push({ model, body });
@@ -84,14 +84,11 @@ async function main() {
     assert.deepEqual(content[0], { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } });
   });
 
-  await test("a scanned PDF is sent as an OpenRouter file part", async () => {
+  await test("a scanned PDF is sent as a data URL too (apiyi's Gemini models ignore file parts)", async () => {
     pretend(() => ok({ a: 1 }));
     await generateJsonWithMeta({ ...OPTS, file: { mime: "application/pdf", data: "JVBE" } });
     const content = (sent[0].body.messages as Array<{ content: Array<Record<string, unknown>> }>)[0].content;
-    assert.deepEqual(content[0], {
-      type: "file",
-      file: { filename: "syllabus.pdf", file_data: "data:application/pdf;base64,JVBE" },
-    });
+    assert.deepEqual(content[0], { type: "image_url", image_url: { url: "data:application/pdf;base64,JVBE" } });
   });
 
   await test("when the main model is busy (503), the backup model answers", async () => {
