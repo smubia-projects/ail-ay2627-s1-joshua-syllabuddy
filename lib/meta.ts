@@ -1,8 +1,9 @@
 import type { ReadMeta } from "./types";
 
-/** "gemini-3.8-flash" -> "Gemini 3.8 Flash" */
+/** "gemini-3.5-flash-lite" -> "Gemini 3.5 Flash Lite" */
 export function prettyModel(model: string): string {
   return model
+    .replace(/^[^/]*\//, "")
     .split("-")
     .map((p) => (p ? p[0].toUpperCase() + p.slice(1) : p))
     .join(" ");
