@@ -1,8 +1,5 @@
 /** @type {import('next').NextConfig} */
-const nextConfig = {
-  experimental: {
-    serverActions: { bodySizeLimit: "10mb" },
-  },
-};
+// Frontend only: the API lives in server/ (Cloud Run) and is reached via NEXT_PUBLIC_API_BASE.
+const nextConfig = {};
 
 export default nextConfig;

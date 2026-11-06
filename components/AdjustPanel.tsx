@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { describeAdjustment, describeAvailability } from "@/lib/adjust";
+import { apiJson, isHandledApiError } from "@/lib/api";
 import { todayISO } from "@/lib/dates";
 import type { Adjustment, Availability, CourseItem } from "@/lib/types";
 
@@ -35,26 +36,30 @@ export default function AdjustPanel({ items, availability, onApply, onRemoveAvai
     setError(null);
     setProposal(null);
     try {
-      const res = await fetch("/api/adjust", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          request: text,
-          today: todayISO(),
-          items: items.map((i) => ({
-            id: i.id,
-            course: i.course,
-            title: i.title,
-            type: i.type,
-            dueDate: i.dueDate,
-            done: !!i.done,
-          })),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Something went wrong.");
-      setProposal(data as Proposal);
+      const data = await apiJson<Proposal>(
+        "/api/adjust",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            request: text,
+            today: todayISO(),
+            items: items.map((i) => ({
+              id: i.id,
+              course: i.course,
+              title: i.title,
+              type: i.type,
+              dueDate: i.dueDate,
+              done: !!i.done,
+            })),
+          }),
+        },
+        "Something went wrong.",
+      );
+      setProposal(data);
     } catch (e) {
+      // 429 / 503 are already shown as a modal by lib/api.ts.
+      if (isHandledApiError(e)) return;
       setError(e instanceof Error ? e.message : "Something went wrong.");
     } finally {
       setBusy(false);
