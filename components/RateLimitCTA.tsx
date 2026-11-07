@@ -16,7 +16,7 @@ export const PROJECT_CTA = {
   accentColor: '#FF6B57',
   headline: "Your semester is mapped out!",
   description:
-    'This demo made {count} AI requests for you, reading syllabi and re-planning your weeks. Want to build AI tools that make student life easier? Join us and build projects like this.',
+    'Want to build AI that turns a pile of course outlines into a study plan that adapts? Write real code, deploy real apps and pick up more from teammates than any textbook could teach: that is AI Lodge.',
   programme: 'AI Lodge',
   programmeLink: 'https://www.smubia.com/ailodge',
   githubLink: 'https://github.com/smubia-projects/ail-ay2627-s1-joshua-syllabuddy',
