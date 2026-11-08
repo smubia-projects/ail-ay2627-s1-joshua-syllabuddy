@@ -2,6 +2,9 @@ import type { ReadMeta } from "./types";
 
 /** "gemini-3.5-flash-lite" -> "Gemini 3.5 Flash Lite" */
 export function prettyModel(model: string): string {
+  // "deepseek-v4-1-flash-260910" -> "DeepSeek V4.1 Flash"
+  const ds = /^(?:[^/]*\/)?deepseek-v(\d+)(?:-(\d+))?-([a-z]+)/i.exec(model);
+  if (ds) return `DeepSeek V${ds[1]}${ds[2] ? `.${ds[2]}` : ""} ${ds[3][0].toUpperCase()}${ds[3].slice(1)}`;
   return model
     .replace(/^[^/]*\//, "")
     .split("-")

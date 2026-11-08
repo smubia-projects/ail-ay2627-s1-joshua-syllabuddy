@@ -11,7 +11,10 @@
 
 const openrouterUrl = () => `${((process.env.API_BASE_URL || process.env.OPENROUTER_BASE_URL)?.trim() || "https://api.apiyi.com/v1").replace(/\/+$/, "")}/chat/completions`;
 // Read at call time so tests and scripts can change them after import.
-const mainModel = () => (process.env.MODEL_NAME || process.env.OPENROUTER_MODEL)?.trim() || "gemini-3.5-flash-lite";
+const mainModel = () => (process.env.MODEL_NAME || process.env.OPENROUTER_MODEL)?.trim() || "deepseek-v4-1-flash-260910";
+// deepseek-v4-1-flash-260910 rejects PDF parts (HTTP 400 "Invalid base64 image_url", 2026-11-08), so a request that
+// sends a PDF file goes to a Gemini model, which reads it. Images go to the main model.
+const pdfModel = () => process.env.PDF_MODEL_NAME?.trim() || "gemini-3.5-flash-lite";
 const fallbackModel = () => (process.env.FALLBACK_MODEL_NAME || process.env.OPENROUTER_FALLBACK_MODEL)?.trim() || "gemini-3.1-flash-lite";
 // Short enough that a model that has stopped answering is skipped for the backup model.
 const TIMEOUT_MS = 22_000;
@@ -150,7 +153,12 @@ async function viaOpenRouter(o: GenerateOptions, key: string, model: string, t?:
               type: "json_schema",
               json_schema: { name: o.toolName, description: o.toolDescription, strict: false, schema: o.schema },
             },
-        ...(plain ? {} : { reasoning: { effort: versionOf(model) >= 3 ? "low" : "none", exclude: true } }),
+        // DeepSeek takes its own flag (no thinking at all: each call has a 22 s limit).
+        ...(plain
+          ? {}
+          : model.includes("deepseek")
+            ? { reasoning_effort: "none" }
+            : { reasoning: { effort: versionOf(model) >= 3 ? "low" : "none", exclude: true } }),
       }),
       signal: AbortSignal.timeout(callTimeout(t)),
     });
@@ -214,7 +222,7 @@ async function viaOpenRouterWithFallback(o: GenerateOptions, key: string, t?: Tr
     }
   };
 
-  const main = mainModel();
+  const main = o.file?.mime === "application/pdf" ? pdfModel() : mainModel();
   const backup = fallbackModel();
   let last: unknown;
   const failures: unknown[] = [];
@@ -291,7 +299,7 @@ export async function generateJsonWithMeta(
           model: trace.model,
           calls: trace.calls,
           ms: Date.now() - startedAt,
-          fellBack: trace.model !== mainModel(),
+          fellBack: trace.model !== (o.file?.mime === "application/pdf" ? pdfModel() : mainModel()),
         },
       };
     } catch (err) {
